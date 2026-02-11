@@ -1,0 +1,3 @@
+module OpenCDP {
+    header "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/include/OpenCDP-Swift.h"
+}

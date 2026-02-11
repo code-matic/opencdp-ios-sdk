@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDPTests.build/master.swiftdeps"
+  },
+  "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/Tests/OpenCDPTests/OpenCDPTests.swift": {
+    "dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDPTests.build/OpenCDPTests.d",
+    "object": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDPTests.build/OpenCDPTests.swift.o",
+    "swiftmodule": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDPTests.build/OpenCDPTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDPTests.build/OpenCDPTests.swiftdeps",
+    "diagnostics": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDPTests.build/OpenCDPTests.dia"
+  }
+}

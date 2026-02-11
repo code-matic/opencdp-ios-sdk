@@ -1,0 +1,26 @@
+{
+  "": {
+    "swift-dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/master.swiftdeps"
+  },
+  "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/Sources/OpenCDP/CDPHttpClient.swift": {
+    "dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/CDPHttpClient.d",
+    "object": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/CDPHttpClient.swift.o",
+    "swiftmodule": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/CDPHttpClient~partial.swiftmodule",
+    "swift-dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/CDPHttpClient.swiftdeps",
+    "diagnostics": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/CDPHttpClient.dia"
+  },
+  "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/Sources/OpenCDP/OpenCDP.swift": {
+    "dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDP.d",
+    "object": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDP.swift.o",
+    "swiftmodule": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDP~partial.swiftmodule",
+    "swift-dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDP.swiftdeps",
+    "diagnostics": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDP.dia"
+  },
+  "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/Sources/OpenCDP/OpenCDPConfig.swift": {
+    "dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDPConfig.d",
+    "object": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDPConfig.swift.o",
+    "swiftmodule": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDPConfig~partial.swiftmodule",
+    "swift-dependencies": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDPConfig.swiftdeps",
+    "diagnostics": "/Users/mac/CodeMatic/sdk-porting-agent/opencdp-ios-sdk/.build/x86_64-apple-macosx/debug/OpenCDP.build/OpenCDPConfig.dia"
+  }
+}
