@@ -1,7 +1,7 @@
 import Foundation
 
 /// Configuration for the OpenCDP SDK
-public struct OpenCDPConfig {
+public struct OpenCDPConfig: Sendable {
     /// The API key for authenticating with OpenCDP
     public let cdpApiKey: String
     
