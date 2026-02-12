@@ -16,7 +16,7 @@ Pod::Spec.new do |spec|
   #
 
   spec.name         = "OpenCDP"
-  spec.version      = "0.0.1"
+  spec.version      = "0.0.2"
   spec.summary      = "A powerful iOS SDK for integrating with OpenCDP (Customer Data Platform)."
 
   # This description is used to generate tags and improve search results.

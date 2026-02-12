@@ -56,9 +56,10 @@ final class CDPHttpClient: Sendable {
         }
         
         let isDebug = config.debug
+        let currentSession = session
         
         return try await withCheckedThrowingContinuation { continuation in
-            let task = session.dataTask(with: request) { data, response, error in
+            let task = currentSession.dataTask(with: request) { data, response, error in
                 if let httpResponse = response as? HTTPURLResponse, isDebug {
                      print("OpenCDP [DEBUG]: Response Headers: \(httpResponse.allHeaderFields)")
                 }
