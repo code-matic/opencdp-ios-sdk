@@ -55,9 +55,11 @@ final class CDPHttpClient: Sendable {
             throw CDPError.invalidInput
         }
         
+        let isDebug = config.debug
+        
         return try await withCheckedThrowingContinuation { continuation in
             let task = session.dataTask(with: request) { data, response, error in
-                if let httpResponse = response as? HTTPURLResponse, self.config.debug {
+                if let httpResponse = response as? HTTPURLResponse, isDebug {
                      print("OpenCDP [DEBUG]: Response Headers: \(httpResponse.allHeaderFields)")
                 }
                 

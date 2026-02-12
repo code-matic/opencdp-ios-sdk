@@ -76,5 +76,8 @@ pod trunk register developers@codematic.io 'CodeMatic' --description='OpenCDP iO
 
 pod spec create OpenCDP
 
-pod spec lint OpenCDP.podspec
+pod spec lint OpenCDP.podspec --allow-warnings
+
+pod trunk push OpenCDP.podspec --allow-warnings
+
 
