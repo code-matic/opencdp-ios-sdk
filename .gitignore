@@ -1,0 +1,46 @@
+# Xcode
+#
+# gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
+
+## Build results
+build/
+DerivedData/
+
+## Usage reports
+Report.abp
+
+## Examples
+Example/Pods/
+Example/.bundle/
+Example/vendor/bundle
+
+## Others
+*.nbextension/
+.AppleDouble
+.LSOverride
+
+# Icon must end with two spaces
+Icon  
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a project
+.DS_Store
+Covers.json
+desktop.ini
+
+# git-it-on.el
+.dir-locals.el
+
+# Network crashes (it's a bit too much actually)
+# CFNetworkDownload_*.tmp
+
+# Common build artifacts
+.build/
+.swiftpm/
+
+# User-specific files
+*.xcuserdatad/
+*.xcsetup
+*.xccheckout

@@ -8,7 +8,7 @@ public enum CDPError: Error {
     case decodingError
 }
 
-class CDPHttpClient {
+final class CDPHttpClient: Sendable {
     private let session: URLSession
     private let config: OpenCDPConfig
     
