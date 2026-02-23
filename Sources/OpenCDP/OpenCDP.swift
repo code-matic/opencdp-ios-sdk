@@ -11,7 +11,7 @@ public class OpenCDP {
     private var config: OpenCDPConfig?
     private var httpClient: CDPHttpClient?
     private var isInitialized = false
-    private let queue = DispatchQueue(label: "com.opencdp.sdk.queue")
+    private var storage: CDPStorage?
     
     /// Current user identifier
     public private(set) var currentUserId: String?
@@ -24,7 +24,14 @@ public class OpenCDP {
     public func initialize(config: OpenCDPConfig) {
         self.config = config
         self.httpClient = CDPHttpClient(config: config)
+        self.storage = CDPStorage(appGroup: config.iOSAppGroup)
         self.isInitialized = true
+        
+        // Restore previous identifier if available
+        if let savedId = storage?.getIdentifier() {
+            self.currentUserId = savedId
+            logDebug("Restored identity: \(savedId)")
+        }
         
         if config.debug {
             print("🚀 OpenCDP SDK Initialized")
@@ -33,11 +40,14 @@ public class OpenCDP {
         if config.trackApplicationLifecycleEvents {
             setupLifecycleTracking()
         }
+        
+        // Attempt to flush offline queue on startup
+        flushQueue()
     }
     
     // MARK: - API Calls
     
-    private func sendRequest(endpoint: String, body: [String: Any]) {
+    private func sendRequest(endpoint: String, body: [String: Any], isRetry: Bool = false) {
         guard let client = httpClient else { return }
         
         Task {
@@ -47,11 +57,22 @@ public class OpenCDP {
                 } else {
                     logDebug("✅ Success [\(endpoint)]: No content")
                 }
+                
+                // If successful and not a retry, try to flush the queue
+                if !isRetry {
+                    flushQueue()
+                }
             } catch {
                 if let cdpError = error as? CDPError {
                     switch cdpError {
-                    case .networkError(let msg): logError("❌ Network Error [\(endpoint)]: \(msg)")
-                    case .serverError(let code, let message): logError("❌ Server Error [\(endpoint)]: Status \(code) - \(message)")
+                    case .networkError(let msg):
+                        handleFailure(endpoint: endpoint, body: body, message: "Network Error: \(msg)", isRetry: isRetry)
+                    case .serverError(let code, let message):
+                        if code >= 500 {
+                            handleFailure(endpoint: endpoint, body: body, message: "Server Error (\(code)): \(message)", isRetry: isRetry)
+                        } else {
+                            logError("❌ Client/Validation Error [\(endpoint)]: Status \(code) - \(message)")
+                        }
                     case .decodingError: logError("❌ Decoding Error [\(endpoint)]")
                     case .invalidInput: logError("❌ Invalid Input [\(endpoint)]")
                     case .initializationError: logError("❌ Initialization Error")
@@ -60,6 +81,48 @@ public class OpenCDP {
                     logError("❌ Unknown Error [\(endpoint)]: \(error.localizedDescription)")
                 }
             }
+        }
+    }
+    
+    private func handleFailure(endpoint: String, body: [String: Any], message: String, isRetry: Bool) {
+        logError("❌ \(message) [\(endpoint)]")
+        if !isRetry {
+            logDebug("Queueing request for later retry: \(endpoint)")
+            storage?.addToQueue(endpoint: endpoint, body: body)
+        }
+    }
+    
+    private func flushQueue() {
+        guard let storage = storage, let client = httpClient else { return }
+        
+        let queuedItems = storage.getQueue()
+        guard !queuedItems.isEmpty else { return }
+        
+        logDebug("Flushing \(queuedItems.count) queued requests")
+        
+        // Process ONLY the first item. If successful, it recursively calls flushQueue via sendRequest.
+        // This prevents overwhelming the server and maintains order.
+        if let firstItemJson = queuedItems.first,
+           let data = firstItemJson.data(using: .utf8),
+           let item = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let endpoint = item["endpoint"] as? String,
+           let body = item["body"] as? [String: Any] {
+            
+            Task {
+                do {
+                    _ = try await client.post(endpoint: endpoint, body: body)
+                    logDebug("✅ Successfully flushed queued request: \(endpoint)")
+                    storage.popQueue()
+                    // Recurse to process the next item
+                    self.flushQueue()
+                } catch {
+                    logDebug("⚠️ Failed to flush queued request, will retry later: \(error)")
+                }
+            }
+        } else if !queuedItems.isEmpty {
+            // Remove corrupt item
+            storage.popQueue()
+            flushQueue()
         }
     }
     
@@ -75,13 +138,12 @@ public class OpenCDP {
         }
         
         self.currentUserId = identifier
+        storage?.setIdentifier(identifier)
         logDebug("Identifying user: \(identifier)")
         
-        sendRequest(endpoint: "/v1/persons/identify", body: [
+        sendRequest(endpoint: "/identify", body: [
             "identifier": identifier,
-            "properties": properties, // Flutter uses 'properties', I was using 'traits' (common in Segment but need CD parity) -> checking Flutter line 244: 'properties': normalizedProps. OK.
-            // Wait, my previous code had "traits". Flutter has "properties".
-            // I should use "properties".
+            "traits": properties,
             "timestamp": Date().timeIntervalSince1970
         ])
     }
@@ -95,30 +157,14 @@ public class OpenCDP {
         guard isInitialized else { return }
         logDebug("Tracking event: \(eventName)")
         
-        var body = properties
-        body["eventName"] = eventName
-        body["identifier"] = currentUserId
-        body["timestamp"] = Date().timeIntervalSince1970
-        // Flutter sends: identifier, eventName, properties (nested?)
-        // Let's check Flutter line 298.
-        /*
-          {
-          'identifier': _currentIdentifier,
-          'eventName': eventName,
-          'properties': normalizedProps,
-        },
-        */
-        // My previous code was merging properties into the body top-level. 
-        // Flutter sends them as a NESTED "properties" object!
-        
         let payload: [String: Any] = [
             "identifier": currentUserId ?? "",
-            "eventName": eventName,
+            "event": eventName,
             "properties": properties,
             "timestamp": Date().timeIntervalSince1970
         ]
         
-        sendRequest(endpoint: "/v1/persons/track", body: payload)
+        sendRequest(endpoint: "/track", body: payload)
     }
     
     /// Track a screen view manually.
@@ -141,16 +187,17 @@ public class OpenCDP {
         guard isInitialized else { return }
         logDebug("Registering device token: \(token)")
         
-        sendRequest(endpoint: "/v1/persons/registerDevice", body: [
-            "deviceToken": token,
+        sendRequest(endpoint: "/device", body: [
+            "device_token": token,
             "identifier": currentUserId ?? "",
-            "platform": "ios"
+            "os": "ios"
         ])
     }
     
     /// Clear the current user identity and reset SDK state.
     public func clearIdentity() {
         self.currentUserId = nil
+        storage?.setIdentifier(nil)
         logDebug("Identity cleared")
     }
     

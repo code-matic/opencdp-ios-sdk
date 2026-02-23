@@ -40,7 +40,7 @@ final class CDPHttpClient: Sendable {
         request.setValue(cleanApiKey, forHTTPHeaderField: "Authorization")
         
         if config.debug {
-            let maskedKey = String(cleanApiKey.prefix(4)) + "..." + String(cleanApiKey.suffix(4))
+            let maskedKey = cleanApiKey.prefix(4) + "..." + cleanApiKey.suffix(4)
             print("OpenCDP [DEBUG]: Request URL: \(url.absoluteString)")
             print("OpenCDP [DEBUG]: Sending request with API Key: \(maskedKey)")
             // Log hex bytes to detect hidden characters
