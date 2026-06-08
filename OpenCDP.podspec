@@ -16,8 +16,8 @@ Pod::Spec.new do |spec|
   #
 
   spec.name         = "OpenCDP"
-  spec.version      = "0.0.2"
-  spec.summary      = "A powerful iOS SDK for integrating with OpenCDP (Customer Data Platform)."
+  spec.version      = "0.1.0"
+  spec.summary      = "OpenCDP iOS SDK — analytics, push v2, and in-app messaging parity with Flutter SDK v3.1.1."
 
   # This description is used to generate tags and improve search results.
   #   * Think: What does it do? Why did you write it? What is the focus?
@@ -25,7 +25,8 @@ Pod::Spec.new do |spec|
   #   * Write the description between the DESC delimiters below.
   #   * Finally, don't worry about the indent, CocoaPods strips it!
   spec.description  = <<-DESC
-                   OpenCDP is a flexible and privacy-focused Customer Data Platform. This SDK allows you to easily track user behavior, identify users, and manage events from your iOS applications.
+                   OpenCDP iOS SDK with gateway failover, push delivery/open/click metrics,
+                   Notification Service Extension helper, in-app message sync/SSE, and optional Customer.io dual-write.
                    DESC
 
   spec.homepage     = "https://github.com/code-matic/opencdp-ios-sdk"
@@ -93,7 +94,11 @@ Pod::Spec.new do |spec|
   #
 
   spec.source_files  = "Sources/OpenCDP/**/*.swift"
-  spec.exclude_files = "Classes/Exclude"
+
+  spec.subspec 'PushExtension' do |ext|
+    ext.source_files = "Sources/OpenCDPPushExtension/**/*.swift"
+    ext.dependency 'OpenCDP'
+  end
 
   # spec.public_header_files = "Classes/**/*.h"
 

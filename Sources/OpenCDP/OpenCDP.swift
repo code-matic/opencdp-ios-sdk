@@ -1,208 +1,298 @@
 import Foundation
 #if canImport(UIKit)
 import UIKit
+import ObjectiveC
 #endif
 
-/// Main SDK class for Open CDP
-public class OpenCDP {
-    /// Singleton instance
+public final class OpenCDP: @unchecked Sendable {
     public static let shared = OpenCDP()
-    
+
     private var config: OpenCDPConfig?
     private var httpClient: CDPHttpClient?
-    private var isInitialized = false
     private var storage: CDPStorage?
-    
-    /// Current user identifier
+    private var inAppManager: CDPInAppManager?
+    #if canImport(UIKit)
+    private var screenTracker: ScreenTracker?
+    #endif
+    private var wasBackgrounded = false
+    private var initialized = false
+
     public private(set) var currentUserId: String?
-    
+
+    public var inApp: CDPInAppManager? { inAppManager }
+
     private init() {}
-    
-    /// Initialize the SDK with the provided configuration.
-    ///
-    /// - Parameter config: The configuration object
-    public func initialize(config: OpenCDPConfig) {
+
+    public func initialize(config: OpenCDPConfig, shouldReinitialize: Bool = false) {
+        if initialized, !shouldReinitialize { return }
+        if initialized, shouldReinitialize {
+            inAppManager?.dispose()
+            inAppManager = nil
+        }
+
         self.config = config
-        self.httpClient = CDPHttpClient(config: config)
         self.storage = CDPStorage(appGroup: config.iOSAppGroup)
-        self.isInitialized = true
-        
-        // Restore previous identifier if available
+        self.httpClient = CDPHttpClient(config: config, storage: storage!)
+        bootstrapDeviceId()
+        persistBridgeCredentials()
+
         if let savedId = storage?.getIdentifier() {
-            self.currentUserId = savedId
-            logDebug("Restored identity: \(savedId)")
+            currentUserId = savedId
         }
-        
-        if config.debug {
-            print("🚀 OpenCDP SDK Initialized")
+
+        if config.sendToCustomerIo, let cio = config.customerIo {
+            CustomerIOWrapper.initialize(config: cio)
         }
-        
+
         if config.trackApplicationLifecycleEvents {
             setupLifecycleTracking()
         }
-        
-        // Attempt to flush offline queue on startup
-        flushQueue()
+
+        #if canImport(UIKit)
+        if config.autoTrackScreens {
+            ScreenTracker.swizzleIfNeeded()
+            screenTracker = ScreenTracker(openCDP: self)
+            screenTracker?.start()
+        }
+        #endif
+
+        let callbacks = InAppCallbacks(host: self)
+        inAppManager = CDPInAppManager(config: config, callbacks: callbacks)
+        inAppManager?.startIfEnabled(initialIdentity: currentUserId)
+
+        Task { await httpClient?.flushQueue() }
+
+        if config.autoTrackDeviceAttributes {
+            Task { await registerDeviceToken(storage?.getApnsToken()) }
+        }
+
+        initialized = true
+        logDebug("OpenCDP SDK Initialized")
     }
-    
-    // MARK: - API Calls
-    
-    private func sendRequest(endpoint: String, body: [String: Any], isRetry: Bool = false) {
-        guard let client = httpClient else { return }
-        
+
+    public func identify(identifier: String, properties: [String: Any] = [:], customerIoId: String? = nil) {
         Task {
-            do {
-                if let response = try await client.post(endpoint: endpoint, body: body) {
-                    logDebug("✅ Success [\(endpoint)]: \(response)")
-                } else {
-                    logDebug("✅ Success [\(endpoint)]: No content")
-                }
-                
-                // If successful and not a retry, try to flush the queue
-                if !isRetry {
-                    flushQueue()
-                }
-            } catch {
-                if let cdpError = error as? CDPError {
-                    switch cdpError {
-                    case .networkError(let msg):
-                        handleFailure(endpoint: endpoint, body: body, message: "Network Error: \(msg)", isRetry: isRetry)
-                    case .serverError(let code, let message):
-                        if code >= 500 {
-                            handleFailure(endpoint: endpoint, body: body, message: "Server Error (\(code)): \(message)", isRetry: isRetry)
-                        } else {
-                            logError("❌ Client/Validation Error [\(endpoint)]: Status \(code) - \(message)")
-                        }
-                    case .decodingError: logError("❌ Decoding Error [\(endpoint)]")
-                    case .invalidInput: logError("❌ Invalid Input [\(endpoint)]")
-                    case .initializationError: logError("❌ Initialization Error")
-                    }
-                } else {
-                    logError("❌ Unknown Error [\(endpoint)]: \(error.localizedDescription)")
-                }
+            guard await ensureInitialized() else { return }
+            guard validateIdentifier(identifier) else { return }
+            currentUserId = identifier
+            storage?.setIdentifier(identifier)
+            try? await httpClient?.post(
+                endpoint: CDPEndpoints.identify,
+                body: ["identifier": identifier, "properties": properties],
+                identifier: identifier
+            )
+            inAppManager?.setActiveIdentity(identifier)
+            if config?.sendToCustomerIo == true {
+                CustomerIOWrapper.identify(userId: customerIoId ?? identifier, traits: properties)
             }
         }
     }
-    
-    private func handleFailure(endpoint: String, body: [String: Any], message: String, isRetry: Bool) {
-        logError("❌ \(message) [\(endpoint)]")
-        if !isRetry {
-            logDebug("Queueing request for later retry: \(endpoint)")
-            storage?.addToQueue(endpoint: endpoint, body: body)
-        }
-    }
-    
-    private func flushQueue() {
-        guard let storage = storage, let client = httpClient else { return }
-        
-        let queuedItems = storage.getQueue()
-        guard !queuedItems.isEmpty else { return }
-        
-        logDebug("Flushing \(queuedItems.count) queued requests")
-        
-        // Process ONLY the first item. If successful, it recursively calls flushQueue via sendRequest.
-        // This prevents overwhelming the server and maintains order.
-        if let firstItemJson = queuedItems.first,
-           let data = firstItemJson.data(using: .utf8),
-           let item = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let endpoint = item["endpoint"] as? String,
-           let body = item["body"] as? [String: Any] {
-            
-            Task {
-                do {
-                    _ = try await client.post(endpoint: endpoint, body: body)
-                    logDebug("✅ Successfully flushed queued request: \(endpoint)")
-                    storage.popQueue()
-                    // Recurse to process the next item
-                    self.flushQueue()
-                } catch {
-                    logDebug("⚠️ Failed to flush queued request, will retry later: \(error)")
-                }
+
+    public func track(eventName: String, properties: [String: Any] = [:]) {
+        Task {
+            guard await ensureInitialized() else { return }
+            guard validateEventName(eventName) else { return }
+            try? await httpClient?.post(
+                endpoint: CDPEndpoints.track,
+                body: [
+                    "identifier": currentIdentifier(),
+                    "eventName": eventName,
+                    "properties": properties,
+                ],
+                identifier: currentIdentifier()
+            )
+            if config?.sendToCustomerIo == true {
+                CustomerIOWrapper.track(eventName: eventName, properties: properties)
             }
-        } else if !queuedItems.isEmpty {
-            // Remove corrupt item
-            storage.popQueue()
-            flushQueue()
         }
     }
-    
-    /// Identify a user with a unique identifier and optional properties.
-    ///
-    /// - Parameters:
-    ///   - identifier: Unique user ID (NOT an email)
-    ///   - properties: Optional user properties
-    public func identify(identifier: String, properties: [String: Any] = [:]) {
-        guard isInitialized else {
-            logError("SDK not initialized. Call initialize() first.")
+
+    public func trackScreenView(title: String, properties: [String: Any] = [:]) {
+        Task {
+            guard await ensureInitialized() else { return }
+            var merged = properties
+            merged["screen"] = title
+            try? await httpClient?.post(
+                endpoint: CDPEndpoints.track,
+                body: [
+                    "identifier": currentIdentifier(),
+                    "eventName": "screen_view",
+                    "properties": merged,
+                ],
+                identifier: currentIdentifier()
+            )
+            inAppManager?.setCurrentScreen(title)
+            if config?.sendToCustomerIo == true {
+                CustomerIOWrapper.screen(title: title, properties: merged)
+            }
+        }
+    }
+
+    public func trackLifecycleEvent(eventName: String, properties: [String: Any] = [:]) {
+        track(eventName: eventName, properties: properties)
+    }
+
+    public func registerDeviceToken(_ token: String?) {
+        Task { await registerDeviceTokenInternal(token) }
+    }
+
+    public func handleForegroundPushDelivery(_ data: [String: String]) {
+        Task { await handlePushMetric(status: "delivered", data: data) }
+    }
+
+    public func handleBackgroundPushDelivery(_ data: [String: String]) {
+        Task { await handlePushMetric(status: "delivered", data: data) }
+    }
+
+    public func handlePushNotificationOpen(_ data: [String: String]) {
+        Task {
+            let actionId = OpenCDPPushPayload.resolveActionId(data)
+            let status = actionId != nil ? "clicked" : "opened"
+            await handlePushMetric(status: status, data: data, actionId: actionId)
+        }
+    }
+
+    public func clearIdentity() {
+        Task {
+            guard await ensureInitialized() else { return }
+            await httpClient?.flushQueue()
+            currentUserId = nil
+            storage?.clearIdentity()
+            inAppManager?.setActiveIdentity(nil)
+            inAppManager?.resetSession()
+            if config?.sendToCustomerIo == true {
+                CustomerIOWrapper.clearIdentify()
+            }
+            logDebug("Identity cleared")
+        }
+    }
+
+    public func addInAppListener(_ listener: @escaping InAppMessageListener) {
+        inAppManager?.addListener(listener)
+    }
+
+    public func syncInAppMessages(screen: String? = nil, limit: Int? = nil) async -> [InAppMessage] {
+        guard await ensureInitialized() else { return [] }
+        return await syncInAppMessagesInternal(screen: screen, limit: limit)
+    }
+
+    public func trackInAppImpression(_ message: InAppMessage) async {
+        await inAppManager?.trackImpression(message)
+    }
+
+    public func trackInAppClick(_ message: InAppMessage, actionId: String) async {
+        await inAppManager?.trackClick(message, actionId: actionId)
+    }
+
+    public func trackInAppDismiss(_ message: InAppMessage, reason: InAppDismissReason = .unknown) async {
+        await inAppManager?.trackDismiss(message, reason: reason)
+    }
+
+    func syncInAppMessagesInternal(screen: String?, limit: Int?) async -> [InAppMessage] {
+        guard let httpClient, let config else { return [] }
+        let resolvedScreen = screen ?? "unknown"
+        let resolvedLimit = min(max(limit ?? config.inAppSyncLimit, 1), 50)
+        var query: [String: Any] = [
+            "person_id": currentIdentifier(),
+            "screen": resolvedScreen,
+            "platform": config.inAppPlatformOverride ?? "ios",
+            "limit": resolvedLimit,
+            "tz_offset_minutes": TimeZone.current.secondsFromGMT() / 60,
+        ]
+        if let appVersion = config.inAppAppVersionOverride, !appVersion.isEmpty {
+            query["app_version"] = appVersion
+        }
+        guard let response = try? await httpClient.get(endpoint: CDPEndpoints.inAppSync, query: query),
+              let data = response["data"] as? [String: Any],
+              let rawMessages = data["messages"] as? [[String: Any]] else {
+            return []
+        }
+        return rawMessages.map(InAppMessage.fromJson)
+    }
+
+    private func registerDeviceTokenInternal(_ token: String?) async {
+        guard await ensureInitialized() else { return }
+        guard IdentifierValidator.isValidPushToken(token) else {
+            logError("apnToken cannot be empty")
             return
         }
-        
-        self.currentUserId = identifier
-        storage?.setIdentifier(identifier)
-        logDebug("Identifying user: \(identifier)")
-        
-        sendRequest(endpoint: "/identify", body: [
-            "identifier": identifier,
-            "traits": properties,
-            "timestamp": Date().timeIntervalSince1970
-        ])
+        storage?.setApnsToken(token!)
+        #if canImport(UIKit)
+        let attrs = deviceAttributes()
+        let identifier = currentIdentifier()
+        let deviceIdInput = "\(attrs["device_model"] ?? "")-\(attrs["device_manufacturer"] ?? "")-\(identifier)"
+        let deviceId = HashGenerator.generateMd5Hash(deviceIdInput)
+        try? await httpClient?.post(
+            endpoint: CDPEndpoints.registerDevice,
+            body: [
+                "identifier": identifier,
+                "deviceId": deviceId,
+                "name": attrs["device_manufacturer"] ?? "Apple",
+                "platform": "ios",
+                "osVersion": attrs["os_version"] ?? "",
+                "model": attrs["device_model"] ?? "",
+                "apnToken": token!,
+                "appVersion": attrs["app_version"] ?? "",
+                "attributes": attrs,
+            ],
+            identifier: identifier
+        )
+        if config?.sendToCustomerIo == true {
+            CustomerIOWrapper.registerDeviceToken(token!)
+        }
+        #endif
     }
-    
-    /// Track a custom event.
-    ///
-    /// - Parameters:
-    ///   - eventName: Name of the event
-    ///   - properties: Optional event properties
-    public func track(eventName: String, properties: [String: Any] = [:]) {
-        guard isInitialized else { return }
-        logDebug("Tracking event: \(eventName)")
-        
-        let payload: [String: Any] = [
-            "identifier": currentUserId ?? "",
-            "event": eventName,
-            "properties": properties,
-            "timestamp": Date().timeIntervalSince1970
+
+    private func handlePushMetric(status: String, data: [String: String], actionId: String? = nil) async {
+        guard let config, let httpClient else { return }
+        _ = await PushNotificationTracker.sendMetric(
+            apiKey: config.cdpApiKey,
+            baseUrls: httpClient.baseUrls,
+            status: status,
+            data: data,
+            personId: currentUserId ?? storage?.getIdentifier(),
+            actionId: actionId
+        )
+    }
+
+    private func bootstrapDeviceId() {
+        guard storage?.getDeviceId() == nil else { return }
+        #if canImport(UIKit)
+        if let idfv = UIDevice.current.identifierForVendor?.uuidString {
+            storage?.setDeviceId(idfv)
+        }
+        #endif
+    }
+
+    #if canImport(UIKit)
+    private func deviceAttributes() -> [String: Any] {
+        let device = UIDevice.current
+        let info = Bundle.main.infoDictionary
+        return [
+            "device_manufacturer": "Apple",
+            "device_model": device.model,
+            "os_name": device.systemName,
+            "os_version": device.systemVersion,
+            "app_version": info?["CFBundleShortVersionString"] as? String ?? "",
+            "app_build": info?["CFBundleVersion"] as? String ?? "",
+            "app_package": Bundle.main.bundleIdentifier ?? "",
         ]
-        
-        sendRequest(endpoint: "/track", body: payload)
     }
-    
-    /// Track a screen view manually.
-    ///
-    /// - Parameters:
-    ///   - title: Screen name
-    ///   - properties: Optional properties
-    public func trackScreenView(title: String, properties: [String: Any] = [:]) {
-        guard isInitialized else { return }
-        logDebug("Screen view: \(title)")
-        
-        // Screens are tracked as events
-        track(eventName: "screen_view", properties: properties.merging(["screen": title]) { (_, new) in new })
+    #endif
+
+    private func persistBridgeCredentials() {
+        guard let config, let httpClient, let storage else { return }
+        storage.saveBridgeCredentials(
+            apiKey: config.cdpApiKey,
+            baseUrl: httpClient.baseUrls.first ?? CDPEndpoints.baseURL,
+            baseUrls: httpClient.baseUrls
+        )
     }
-    
-    /// Register a device token for push notifications.
-    ///
-    /// - Parameter token: The APNs device token as a hex string
-    public func registerDeviceToken(_ token: String) {
-        guard isInitialized else { return }
-        logDebug("Registering device token: \(token)")
-        
-        sendRequest(endpoint: "/device", body: [
-            "device_token": token,
-            "identifier": currentUserId ?? "",
-            "os": "ios"
-        ])
+
+    private func currentIdentifier() -> String {
+        currentUserId ?? storage?.getDeviceId() ?? storage?.getIdentifier() ?? "unknown"
     }
-    
-    /// Clear the current user identity and reset SDK state.
-    public func clearIdentity() {
-        self.currentUserId = nil
-        storage?.setIdentifier(nil)
-        logDebug("Identity cleared")
-    }
-    
-    // MARK: - internal helpers
-    
+
     private func setupLifecycleTracking() {
         #if canImport(UIKit)
         NotificationCenter.default.addObserver(
@@ -211,45 +301,136 @@ public class OpenCDP {
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
-        
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appDidEnterBackground),
             name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
         #endif
     }
-    
+
+    #if canImport(UIKit)
     @objc private func appDidBecomeActive() {
-        logDebug("App became active")
-        track(eventName: "application_opened")
+        if wasBackgrounded {
+            trackLifecycleEvent(eventName: "App_foregrounded", properties: ["timestamp": ISO8601DateFormatter().string(from: Date())])
+            wasBackgrounded = false
+        }
+        trackLifecycleEvent(eventName: "App_resumed", properties: ["timestamp": ISO8601DateFormatter().string(from: Date())])
     }
-    
+
     @objc private func appDidEnterBackground() {
-        logDebug("App entered background")
-        track(eventName: "application_backgrounded")
+        wasBackgrounded = true
+        trackLifecycleEvent(eventName: "App_backgrounded", properties: ["timestamp": ISO8601DateFormatter().string(from: Date())])
     }
-    
+
+    @objc private func appWillResignActive() {
+        trackLifecycleEvent(eventName: "App_inactive", properties: ["timestamp": ISO8601DateFormatter().string(from: Date())])
+    }
+    #endif
+
+    @discardableResult
+    private func ensureInitialized() async -> Bool {
+        guard initialized, config != nil, httpClient != nil else {
+            logError("SDK not initialized. Call initialize() first.")
+            return false
+        }
+        return true
+    }
+
+    private func validateIdentifier(_ identifier: String) -> Bool {
+        guard IdentifierValidator.isValidIdentifier(identifier) else {
+            let message = identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Identifier cannot be empty"
+                : "Identifier cannot be an email address"
+            logError(message)
+            return false
+        }
+        return true
+    }
+
+    private func validateEventName(_ eventName: String) -> Bool {
+        guard IdentifierValidator.isValidEventName(eventName) else {
+            logError("Event name cannot be empty")
+            return false
+        }
+        return true
+    }
+
     private func logDebug(_ message: String) {
-        if config?.debug == true {
-            let formattedMessage = "OpenCDP [DEBUG]: \(message)"
-            print(formattedMessage)
-            NotificationCenter.default.post(
-                name: NSNotification.Name("OpenCDPLog"),
-                object: nil,
-                userInfo: ["message": formattedMessage]
+        if config?.debug == true { print("OpenCDP [DEBUG]: \(message)") }
+    }
+
+    private func logError(_ message: String) {
+        print("OpenCDP [ERROR]: \(message)")
+    }
+
+    private final class InAppCallbacks: CDPInAppManager.Callbacks {
+        weak var host: OpenCDP?
+        init(host: OpenCDP) { self.host = host }
+
+        func syncMessages(screen: String, limit: Int) async -> [InAppMessage] {
+            await host?.syncInAppMessagesInternal(screen: screen, limit: limit) ?? []
+        }
+
+        func trackImpression(deliveryId: String, screen: String) async {
+            guard let host, let httpClient = host.httpClient else { return }
+            try? await httpClient.post(
+                endpoint: CDPEndpoints.inAppImpression(deliveryId),
+                body: [
+                    "person_id": host.currentIdentifier(),
+                    "screen": screen,
+                    "platform": host.config?.inAppPlatformOverride ?? "ios",
+                    "ts": ISO8601DateFormatter().string(from: Date()),
+                ],
+                identifier: host.currentIdentifier()
             )
         }
-    }
-    
-    private func logError(_ message: String) {
-        let formattedMessage = "OpenCDP [ERROR]: \(message)"
-        print(formattedMessage)
-        NotificationCenter.default.post(
-            name: NSNotification.Name("OpenCDPLog"),
-            object: nil,
-            userInfo: ["message": formattedMessage]
-        )
+
+        func trackClick(deliveryId: String, actionId: String, screen: String) async {
+            guard let host, let httpClient = host.httpClient else { return }
+            try? await httpClient.post(
+                endpoint: CDPEndpoints.inAppClick(deliveryId),
+                body: [
+                    "person_id": host.currentIdentifier(),
+                    "screen": screen,
+                    "action_id": actionId,
+                    "ts": ISO8601DateFormatter().string(from: Date()),
+                ],
+                identifier: host.currentIdentifier()
+            )
+        }
+
+        func trackDismiss(deliveryId: String, reason: String, screen: String) async {
+            guard let host, let httpClient = host.httpClient else { return }
+            try? await httpClient.post(
+                endpoint: CDPEndpoints.inAppDismiss(deliveryId),
+                body: [
+                    "person_id": host.currentIdentifier(),
+                    "screen": screen,
+                    "reason": reason,
+                    "ts": ISO8601DateFormatter().string(from: Date()),
+                ],
+                identifier: host.currentIdentifier()
+            )
+        }
+
+        func createRealtimeClient(personId: String, onSync: @escaping () -> Void) -> InAppRealtimeClient {
+            let client = InAppRealtimeClient(
+                httpClient: host!.httpClient!,
+                personId: personId,
+                debug: host?.config?.debug == true,
+                maxBackoff: host?.config?.inAppRealtimeMaxBackoff ?? 30,
+                staleTimeout: host?.config?.inAppRealtimeStaleTimeout ?? 60
+            )
+            client.onSyncRequested = onSync
+            return client
+        }
     }
 }
