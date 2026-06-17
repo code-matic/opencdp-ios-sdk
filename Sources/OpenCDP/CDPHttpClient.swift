@@ -1,104 +1,166 @@
 import Foundation
 
-public enum CDPError: Error {
-    case initializationError
-    case invalidInput
-    case networkError(String)
-    case serverError(Int, String) // Add String for response body
-    case decodingError
-}
-
-final class CDPHttpClient: Sendable {
+final class CDPHttpClient: @unchecked Sendable {
+    let baseUrls: [String]
+    private let apiKey: String
+    private let debug: Bool
+    private let requestTimeout: TimeInterval
     private let session: URLSession
-    private let config: OpenCDPConfig
-    
-    init(config: OpenCDPConfig) {
-        self.config = config
+    private let storage: CDPStorage
+    private var isProcessingQueue = false
+    private let queueLock = NSLock()
+
+    init(config: OpenCDPConfig, storage: CDPStorage) {
+        self.baseUrls = CdpGatewayUrls.resolveAllBaseUrls(
+            primaryOverride: config.cdpEndpoint,
+            fallbackOverrides: config.cdpFallbackEndpoints
+        )
+        self.apiKey = config.cdpApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.debug = config.debug
+        self.requestTimeout = CdpGatewayUrls.clampRequestTimeout(config.cdpRequestTimeout)
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30.0
+        configuration.timeoutIntervalForRequest = requestTimeout
         self.session = URLSession(configuration: configuration)
+        self.storage = storage
     }
-    
-    func post(endpoint: String, body: [String: Any]) async throws -> [String: Any]? {
-        // Ensure base URL doesn't end with slash if endpoint starts with one, or vice-versa
-        let characterSet = CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines)
-        let baseUrl = config.apiBaseUrl.trimmingCharacters(in: characterSet)
-        let path = endpoint.trimmingCharacters(in: characterSet)
-        
-        guard let url = URL(string: "\(baseUrl)/\(path)") else {
-            throw CDPError.invalidInput
+
+    func post(endpoint: String, body: [String: Any], identifier: String? = nil) async throws {
+        let success = try await postInternal(endpoint: endpoint, body: body, isRetry: false)
+        if !success {
+            enqueue(endpoint: endpoint, body: body, identifier: identifier)
+        } else {
+            await flushQueue()
         }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Trim whitespace, newlines, and quotes from the API Key
-        let apiKeyCleanupSet = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'"))
-        let cleanApiKey = config.cdpApiKey.trimmingCharacters(in: apiKeyCleanupSet)
-        
-        // Use setValue to overwrite any existing header
-        request.setValue(cleanApiKey, forHTTPHeaderField: "Authorization")
-        
-        if config.debug {
-            let maskedKey = cleanApiKey.prefix(4) + "..." + cleanApiKey.suffix(4)
-            print("OpenCDP [DEBUG]: Request URL: \(url.absoluteString)")
-            print("OpenCDP [DEBUG]: Sending request with API Key: \(maskedKey)")
-            // Log hex bytes to detect hidden characters
-            let hexString = cleanApiKey.utf8.map { String(format: "%02x", $0) }.joined(separator: " ")
-            print("OpenCDP [DEBUG]: API Key Hex: \(hexString)")
-            print("OpenCDP [DEBUG]: Request Headers: \(request.allHTTPHeaderFields ?? [:])")
-        }
-        
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        } catch {
-            throw CDPError.invalidInput
-        }
-        
-        let isDebug = config.debug
-        let currentSession = session
-        
-        return try await withCheckedThrowingContinuation { continuation in
-            let task = currentSession.dataTask(with: request) { data, response, error in
-                if let httpResponse = response as? HTTPURLResponse, isDebug {
-                     print("OpenCDP [DEBUG]: Response Headers: \(httpResponse.allHeaderFields)")
+    }
+
+    func get(endpoint: String, query: [String: Any]) async throws -> [String: Any]? {
+        for root in baseUrls {
+            guard var components = URLComponents(string: "\(root)\(endpoint)") else { continue }
+            components.queryItems = query.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+            guard let url = components.url else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+                if (200...299).contains(http.statusCode) {
+                    if data.isEmpty { return [:] }
+                    return try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 }
-                
-                if let error = error {
-                    continuation.resume(throwing: CDPError.networkError(error.localizedDescription))
-                    return
-                }
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    continuation.resume(throwing: CDPError.networkError("Invalid response"))
-                    return
-                }
-                
-                if !(200...299).contains(httpResponse.statusCode) {
-                    var errorMessage = "Unknown error"
-                    if let data = data, let bodyString = String(data: data, encoding: .utf8) {
-                        errorMessage = bodyString
-                    }
-                    continuation.resume(throwing: CDPError.serverError(httpResponse.statusCode, errorMessage))
-                    return
-                }
-                
-                guard let data = data, !data.isEmpty else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
-                do {
-                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        continuation.resume(returning: json)
-                    } else {
-                        continuation.resume(throwing: CDPError.decodingError)
-                    }
-                } catch {
-                    continuation.resume(throwing: CDPError.decodingError)
-                }
+                logDebug("GET \(endpoint) non-2xx on \(root) (\(http.statusCode))")
+            } catch {
+                logDebug("GET \(endpoint) failed on \(root): \(error.localizedDescription)")
             }
-            task.resume()
         }
+        throw CDPError.networkError("All gateway hosts failed for GET \(endpoint)")
+    }
+
+    func getStreamRequest(endpoint: String, query: [String: String], headers: [String: String]) -> URLRequest? {
+        for root in baseUrls {
+            guard var components = URLComponents(string: "\(root)\(endpoint)") else { continue }
+            components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+            guard let url = components.url else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+            headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+            return request
+        }
+        return nil
+    }
+
+    var sessionForStreaming: URLSession { session }
+
+    func flushQueue() async {
+        let shouldProcess: Bool = {
+            queueLock.lock()
+            defer { queueLock.unlock() }
+            if isProcessingQueue { return false }
+            isProcessingQueue = true
+            return true
+        }()
+        guard shouldProcess else { return }
+
+        defer {
+            queueLock.lock()
+            isProcessingQueue = false
+            queueLock.unlock()
+        }
+
+        while let request = storage.peekQueue() {
+            if request.retryCount >= 5 {
+                storage.popQueue()
+                continue
+            }
+            let delay = computeBackoffSeconds(request.retryCount)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let body = try? JSONSerialization.jsonObject(with: request.bodyData) as? [String: Any] else {
+                storage.popQueue()
+                continue
+            }
+            let success = (try? await postInternal(endpoint: request.endpoint, body: body, isRetry: true)) ?? false
+            if success {
+                storage.popQueue()
+            } else {
+                storage.popQueue()
+                var updated = request
+                updated.retryCount += 1
+                storage.addToQueue(updated)
+                break
+            }
+        }
+    }
+
+    private func postInternal(endpoint: String, body: [String: Any], isRetry: Bool) async throws -> Bool {
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: body) else {
+            throw CDPError.invalidInput
+        }
+        for root in baseUrls {
+            guard let url = URL(string: "\(root)\(endpoint)") else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+            request.httpBody = jsonData
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+                if (200...299).contains(http.statusCode) {
+                    logDebug("POST \(endpoint) succeeded via \(root)")
+                    return true
+                }
+                if (400...499).contains(http.statusCode) {
+                    let message = String(data: data, encoding: .utf8) ?? "Client error"
+                    logDebug("POST \(endpoint) client error \(http.statusCode): \(message)")
+                    return false
+                }
+                logDebug("POST \(endpoint) non-2xx on \(root) (\(http.statusCode))")
+            } catch {
+                logDebug("POST \(endpoint) failed on \(root): \(error.localizedDescription)")
+            }
+        }
+        return false
+    }
+
+    private func enqueue(endpoint: String, body: [String: Any], identifier: String?) {
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        storage.addToQueue(CDPQueuedRequest(
+            endpoint: endpoint,
+            bodyData: data,
+            identifier: identifier,
+            retryCount: 0,
+            createdAt: Date()
+        ))
+    }
+
+    private func computeBackoffSeconds(_ attempt: Int) -> Double {
+        let capped = min(attempt, 16)
+        let exponential = pow(2.0, Double(capped))
+        return Double.random(in: 0...(min(exponential, 30.0)))
+    }
+
+    private func logDebug(_ message: String) {
+        if debug { print("OpenCDP [DEBUG]: \(message)") }
     }
 }
