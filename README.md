@@ -45,7 +45,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/code-matic/opencdp-ios-sdk.git", from: "0.1.0")
+    .package(url: "https://github.com/code-matic/opencdp-ios-sdk.git", from: "0.1.1")
 ]
 ```
 
@@ -56,7 +56,7 @@ Or in Xcode: **File → Add Packages** → paste the URL above.
 Add to your `Podfile`:
 
 ```ruby
-pod 'OpenCDP', '~> 0.1'
+pod 'OpenCDP', '~> 0.1.1'
 ```
 
 Then run:
