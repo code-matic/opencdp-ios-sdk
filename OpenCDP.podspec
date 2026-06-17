@@ -97,7 +97,6 @@ Pod::Spec.new do |spec|
 
   spec.subspec 'PushExtension' do |ext|
     ext.source_files = "Sources/OpenCDPPushExtension/**/*.swift"
-    ext.dependency 'OpenCDP'
   end
 
   # spec.public_header_files = "Classes/**/*.h"
