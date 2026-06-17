@@ -1,9 +1,9 @@
 import Foundation
 
 enum CDPEndpoints {
-    static let baseURL = "https://api.opencdp.com/gateway/data-gateway"
+    static let baseURL = "https://api.opencdp.io/gateway/data-gateway"
+    static let backupBaseURLCom = "https://api.opencdp.com/gateway/data-gateway"
     static let backupBaseURLXyz = "https://api.opencdp.xyz/gateway/data-gateway"
-    static let backupBaseURLIo = "https://api.opencdp.io/gateway/data-gateway"
 
     static let version = "/v1"
     static let identify = "\(version)/persons/identify"
@@ -28,8 +28,8 @@ enum CDPEndpoints {
 
 enum CdpGatewayUrls {
     static let defaultFallbackBaseUrls = [
+        CDPEndpoints.backupBaseURLCom,
         CDPEndpoints.backupBaseURLXyz,
-        CDPEndpoints.backupBaseURLIo,
     ]
 
     static func clampRequestTimeout(_ value: TimeInterval) -> TimeInterval {
