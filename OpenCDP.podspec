@@ -99,6 +99,13 @@ Pod::Spec.new do |spec|
     ext.source_files = "Sources/OpenCDPPushExtension/**/*.swift"
   end
 
+  spec.subspec 'CustomerIO' do |cio|
+    cio.dependency 'CustomerIO/DataPipelines', '~> 3.0'
+    cio.pod_target_xcconfig = {
+      'OTHER_SWIFT_FLAGS' => '$(inherited) -D OPENCdp_HAS_CUSTOMER_IO'
+    }
+  end
+
   # spec.public_header_files = "Classes/**/*.h"
 
 

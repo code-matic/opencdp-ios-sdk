@@ -16,6 +16,8 @@ public final class OpenCDP: @unchecked Sendable {
     #endif
     private var wasBackgrounded = false
     private var initialized = false
+    private var anonymousScreenViews: [(title: String, properties: [String: Any])] = []
+    private let anonymousScreenLock = NSLock()
 
     public private(set) var currentUserId: String?
 
@@ -63,44 +65,63 @@ public final class OpenCDP: @unchecked Sendable {
         Task { await httpClient?.flushQueue() }
 
         if config.autoTrackDeviceAttributes {
-            Task { await registerDeviceToken(storage?.getApnsToken()) }
+            Task { await registerDeviceTokenInternal(storage?.getApnsToken()) }
         }
 
         initialized = true
         logDebug("OpenCDP SDK Initialized")
     }
 
-    public func identify(identifier: String, properties: [String: Any] = [:], customerIoId: String? = nil) {
+    public func identify(identifier: String, properties: [String: Any] = [:], customerIoId: String? = nil) throws {
+        if config?.throwErrorsBack == true {
+            try ensureInitializedThrows()
+            try validateIdentifierThrows(identifier)
+        }
         Task {
             guard await ensureInitialized() else { return }
             guard validateIdentifier(identifier) else { return }
             currentUserId = identifier
             storage?.setIdentifier(identifier)
-            try? await httpClient?.post(
-                endpoint: CDPEndpoints.identify,
-                body: ["identifier": identifier, "properties": properties],
-                identifier: identifier
-            )
+            do {
+                try await httpClient?.post(
+                    endpoint: CDPEndpoints.identify,
+                    body: ["identifier": identifier, "properties": properties],
+                    identifier: identifier
+                )
+            } catch {
+                handleAsyncError("identify", error)
+                return
+            }
             inAppManager?.setActiveIdentity(identifier)
+            flushAnonymousScreenViews()
             if config?.sendToCustomerIo == true {
                 CustomerIOWrapper.identify(userId: customerIoId ?? identifier, traits: properties)
             }
         }
     }
 
-    public func track(eventName: String, properties: [String: Any] = [:]) {
+    public func track(eventName: String, properties: [String: Any] = [:]) throws {
+        if config?.throwErrorsBack == true {
+            try ensureInitializedThrows()
+            try validateEventNameThrows(eventName)
+        }
         Task {
             guard await ensureInitialized() else { return }
             guard validateEventName(eventName) else { return }
-            try? await httpClient?.post(
-                endpoint: CDPEndpoints.track,
-                body: [
-                    "identifier": currentIdentifier(),
-                    "eventName": eventName,
-                    "properties": properties,
-                ],
-                identifier: currentIdentifier()
-            )
+            do {
+                try await httpClient?.post(
+                    endpoint: CDPEndpoints.track,
+                    body: [
+                        "identifier": currentIdentifier(),
+                        "eventName": eventName,
+                        "properties": properties,
+                    ],
+                    identifier: currentIdentifier()
+                )
+            } catch {
+                handleAsyncError("track", error)
+                return
+            }
             if config?.sendToCustomerIo == true {
                 CustomerIOWrapper.track(eventName: eventName, properties: properties)
             }
@@ -108,11 +129,24 @@ public final class OpenCDP: @unchecked Sendable {
     }
 
     public func trackScreenView(title: String, properties: [String: Any] = [:]) {
+        inAppManager?.setCurrentScreen(title)
+        if currentUserId == nil, storage?.getIdentifier() == nil {
+            anonymousScreenLock.lock()
+            anonymousScreenViews.append((title: title, properties: properties))
+            anonymousScreenLock.unlock()
+            return
+        }
         Task {
-            guard await ensureInitialized() else { return }
-            var merged = properties
-            merged["screen"] = title
-            try? await httpClient?.post(
+            await trackScreenViewInternal(title: title, properties: properties)
+        }
+    }
+
+    private func trackScreenViewInternal(title: String, properties: [String: Any]) async {
+        guard await ensureInitialized() else { return }
+        var merged = properties
+        merged["screen"] = title
+        do {
+            try await httpClient?.post(
                 endpoint: CDPEndpoints.track,
                 body: [
                     "identifier": currentIdentifier(),
@@ -121,18 +155,39 @@ public final class OpenCDP: @unchecked Sendable {
                 ],
                 identifier: currentIdentifier()
             )
-            inAppManager?.setCurrentScreen(title)
-            if config?.sendToCustomerIo == true {
-                CustomerIOWrapper.screen(title: title, properties: merged)
+        } catch {
+            handleAsyncError("trackScreenView", error)
+            return
+        }
+        if config?.sendToCustomerIo == true {
+            CustomerIOWrapper.screen(title: title, properties: merged)
+        }
+    }
+
+    private func flushAnonymousScreenViews() {
+        anonymousScreenLock.lock()
+        let buffered = anonymousScreenViews
+        anonymousScreenViews.removeAll()
+        anonymousScreenLock.unlock()
+        guard !buffered.isEmpty else { return }
+        Task {
+            for entry in buffered {
+                await trackScreenViewInternal(title: entry.title, properties: entry.properties)
             }
         }
     }
 
     public func trackLifecycleEvent(eventName: String, properties: [String: Any] = [:]) {
-        track(eventName: eventName, properties: properties)
+        try? track(eventName: eventName, properties: properties)
     }
 
-    public func registerDeviceToken(_ token: String?) {
+    public func registerDeviceToken(_ token: String?) throws {
+        if config?.throwErrorsBack == true {
+            try ensureInitializedThrows()
+            if token != nil {
+                try validatePushTokenThrows(token)
+            }
+        }
         Task { await registerDeviceTokenInternal(token) }
     }
 
@@ -150,6 +205,16 @@ public final class OpenCDP: @unchecked Sendable {
             let status = actionId != nil ? "clicked" : "opened"
             await handlePushMetric(status: status, data: data, actionId: actionId)
         }
+    }
+
+    public func handlePushActionClick(_ data: [String: String], actionId: String) {
+        Task {
+            await handlePushMetric(status: "clicked", data: data, actionId: actionId)
+        }
+    }
+
+    public func handlePushDelivery(_ data: [String: String]) {
+        handleForegroundPushDelivery(data)
     }
 
     public func clearIdentity() {
@@ -170,6 +235,64 @@ public final class OpenCDP: @unchecked Sendable {
     public func addInAppListener(_ listener: @escaping InAppMessageListener) {
         inAppManager?.addListener(listener)
     }
+
+    public func removeInAppListener(_ listener: @escaping InAppMessageListener) {
+        inAppManager?.removeListener(listener)
+    }
+
+    #if DEBUG
+    public func debugTestHostFailover() async throws {
+        guard config?.debug == true else { return }
+        guard await ensureInitialized() else { return }
+        let body: [String: Any] = [
+            "identifier": currentIdentifier(),
+            "eventName": "failover_debug_test",
+            "properties": ["source": "sdk_debug"],
+        ]
+        try await httpClient?.postWithBaseUrls(
+            ["https://127.0.0.1:1"] + (httpClient?.baseUrls ?? []),
+            endpoint: CDPEndpoints.track,
+            body: body,
+            identifier: currentIdentifier(),
+            queueOnFailure: false
+        )
+    }
+
+    public func debugTestQueueRetry() async {
+        guard config?.debug == true else { return }
+        guard await ensureInitialized() else { return }
+        let body: [String: Any] = [
+            "identifier": currentIdentifier(),
+            "eventName": "queue_debug_test",
+            "properties": ["source": "sdk_debug"],
+        ]
+        do {
+            try await httpClient?.postWithBaseUrls(
+                ["https://127.0.0.1:1", "https://127.0.0.1:2"],
+                endpoint: CDPEndpoints.track,
+                body: body,
+                identifier: currentIdentifier()
+            )
+        } catch {
+            logDebug("debugTestQueueRetry expected failure: \(error)")
+        }
+    }
+
+    public func debugDrainQueue() async throws {
+        guard config?.debug == true else { return }
+        guard await ensureInitialized() else { return }
+        try await httpClient?.post(
+            endpoint: CDPEndpoints.track,
+            body: [
+                "identifier": currentIdentifier(),
+                "eventName": "failover_queue_recovery",
+                "properties": ["source": "sdk_debug"],
+            ],
+            identifier: currentIdentifier()
+        )
+        await httpClient?.flushQueue()
+    }
+    #endif
 
     public func syncInAppMessages(screen: String? = nil, limit: Int? = nil) async -> [InAppMessage] {
         guard await ensureInitialized() else { return [] }
@@ -222,21 +345,26 @@ public final class OpenCDP: @unchecked Sendable {
         let identifier = currentIdentifier()
         let deviceIdInput = "\(attrs["device_model"] ?? "")-\(attrs["device_manufacturer"] ?? "")-\(identifier)"
         let deviceId = HashGenerator.generateMd5Hash(deviceIdInput)
-        try? await httpClient?.post(
-            endpoint: CDPEndpoints.registerDevice,
-            body: [
-                "identifier": identifier,
-                "deviceId": deviceId,
-                "name": attrs["device_manufacturer"] ?? "Apple",
-                "platform": "ios",
-                "osVersion": attrs["os_version"] ?? "",
-                "model": attrs["device_model"] ?? "",
-                "apnToken": token!,
-                "appVersion": attrs["app_version"] ?? "",
-                "attributes": attrs,
-            ],
-            identifier: identifier
-        )
+        do {
+            try await httpClient?.post(
+                endpoint: CDPEndpoints.registerDevice,
+                body: [
+                    "identifier": identifier,
+                    "deviceId": deviceId,
+                    "name": attrs["device_manufacturer"] ?? "Apple",
+                    "platform": "ios",
+                    "osVersion": attrs["os_version"] ?? "",
+                    "model": attrs["device_model"] ?? "",
+                    "apnToken": token!,
+                    "appVersion": attrs["app_version"] ?? "",
+                    "attributes": attrs,
+                ],
+                identifier: identifier
+            )
+        } catch {
+            handleAsyncError("registerDeviceToken", error)
+            return
+        }
         if config?.sendToCustomerIo == true {
             CustomerIOWrapper.registerDeviceToken(token!)
         }
@@ -355,12 +483,46 @@ public final class OpenCDP: @unchecked Sendable {
         return true
     }
 
+    private func validateIdentifierThrows(_ identifier: String) throws {
+        guard IdentifierValidator.isValidIdentifier(identifier) else {
+            let message = identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Identifier cannot be empty"
+                : "Identifier cannot be an email address"
+            throw CDPError.validationError("identifier", message)
+        }
+    }
+
     private func validateEventName(_ eventName: String) -> Bool {
         guard IdentifierValidator.isValidEventName(eventName) else {
             logError("Event name cannot be empty")
             return false
         }
         return true
+    }
+
+    private func validateEventNameThrows(_ eventName: String) throws {
+        guard IdentifierValidator.isValidEventName(eventName) else {
+            throw CDPError.validationError("eventName", "Event name cannot be empty")
+        }
+    }
+
+    private func validatePushTokenThrows(_ token: String?) throws {
+        guard IdentifierValidator.isValidPushToken(token) else {
+            throw CDPError.validationError("apnToken", "apnToken cannot be empty")
+        }
+    }
+
+    private func ensureInitializedThrows() throws {
+        guard initialized, config != nil, httpClient != nil else {
+            throw CDPError.initializationError
+        }
+    }
+
+    private func handleAsyncError(_ operation: String, _ error: Error) {
+        logError("\(operation) failed: \(error.localizedDescription)")
+        if config?.throwErrorsBack == true, error is CDPError {
+            // Async callers cannot observe this throw; validation uses synchronous throws.
+        }
     }
 
     private func logDebug(_ message: String) {

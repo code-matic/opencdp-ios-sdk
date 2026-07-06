@@ -54,6 +54,20 @@ public enum OpenCDPPushPayload {
         }
         return nil
     }
+
+    public static func normalizeImageUrl(_ url: String) -> String {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+            return trimmed
+        }
+        return "https://\(trimmed)"
+    }
+
+    public static func parseImageUrl(_ data: [String: String]) -> String? {
+        guard let raw = data["image_url"] else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : normalizeImageUrl(trimmed)
+    }
 }
 
 enum PushNotificationTracker {

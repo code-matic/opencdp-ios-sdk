@@ -27,11 +27,15 @@ public final class CDPInAppManager {
         self.callbacks = callbacks
     }
 
-    func addListener(_ listener: @escaping InAppMessageListener) {
+    public func addListener(_ listener: @escaping InAppMessageListener) {
         listeners.append(listener)
     }
 
-    func setCurrentScreen(_ screen: String, triggerSync: Bool = true) {
+    public func removeListener(_ listener: @escaping InAppMessageListener) {
+        listeners.removeAll { $0 as AnyObject === listener as AnyObject }
+    }
+
+    public func setCurrentScreen(_ screen: String, triggerSync: Bool = true) {
         guard !screen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               currentScreen != screen else { return }
         currentScreen = screen
@@ -40,12 +44,12 @@ public final class CDPInAppManager {
         }
     }
 
-    func resetSession() {
+    public func resetSession() {
         deliveryState.removeAll()
         dispatchedDeliveryIds.removeAll()
     }
 
-    func setActiveIdentity(_ identity: String?) {
+    public func setActiveIdentity(_ identity: String?) {
         guard !disposed, config.enableInAppMessages else { return }
         let trimmed = identity?.trimmingCharacters(in: .whitespacesAndNewlines)
         let next = trimmed.flatMap { $0.isEmpty ? nil : $0 }
@@ -75,11 +79,11 @@ public final class CDPInAppManager {
         if !config.enableInAppRealtime { startPolling() }
     }
 
-    func syncNow(reason: String = "manual") {
+    public func syncNow(reason: String = "manual") {
         Task { await syncNowInternal(reason: reason) }
     }
 
-    func trackImpression(_ message: InAppMessage) async {
+    public func trackImpression(_ message: InAppMessage) async {
         guard !disposed else { return }
         var state = deliveryState[message.deliveryId] ?? DeliveryState()
         state.impressionsTotal += 1
@@ -88,12 +92,12 @@ public final class CDPInAppManager {
         await callbacks?.trackImpression(deliveryId: message.deliveryId, screen: currentScreen)
     }
 
-    func trackClick(_ message: InAppMessage, actionId: String) async {
+    public func trackClick(_ message: InAppMessage, actionId: String) async {
         guard !disposed else { return }
         await callbacks?.trackClick(deliveryId: message.deliveryId, actionId: actionId, screen: currentScreen)
     }
 
-    func trackDismiss(_ message: InAppMessage, reason: InAppDismissReason = .unknown) async {
+    public func trackDismiss(_ message: InAppMessage, reason: InAppDismissReason = .unknown) async {
         guard !disposed else { return }
         var state = deliveryState[message.deliveryId] ?? DeliveryState()
         state.dismissed = true

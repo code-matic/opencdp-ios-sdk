@@ -1,17 +1,26 @@
 # OpenCDP iOS SDK — Example App
 
-This directory contains a complete SwiftUI example app demonstrating the full OpenCDP iOS SDK flow.
+SwiftUI demo covering in-app messaging with all four render types.
 
 ## Features Demonstrated
 
-- SDK Initialization with config (`OpenCDPExampleApp.swift`)
+- SDK Initialization with `enableInAppMessages: true` (`OpenCDPExampleApp.swift`)
+- In-app listener + manual sync (`InAppDemoView.swift`)
+- Logical screen switching (`home`, `cart`, `profile`, `inbox`)
+- Modal, banner, inline, and inbox_card renderers
 - User Identification
-- Custom Event Tracking
-- Manual Screen View Tracking
-- Device Token Registration (simulated APNs)
+- Impression / click / dismiss tracking
 - Clear Identity (Logout)
-- Auto sdk lifecycle tracking (app open / background)
 - Live log output panel in-app
+
+## Render types (`InAppDemoView.swift`)
+
+| Backend value | SwiftUI component |
+|---------------|-------------------|
+| `modal` | `InAppModalView` (sheet) |
+| `banner` | `InAppBannerView` (top overlay) |
+| `inline` | `InAppInlineCardView` |
+| `inbox_card` | Same inline card (use `inbox` screen) |
 
 ## File Structure
 
@@ -20,7 +29,8 @@ Example/
 ├── README.md
 └── OpenCDPExample/
     ├── OpenCDPExampleApp.swift    # App entry — SDK initialization
-    └── ContentView.swift          # Full interactive SwiftUI demo with log output
+    ├── InAppDemoView.swift        # In-app demo (primary UI)
+    └── ContentView.swift          # Legacy identify/track demo (optional)
 ```
 
 ## How to Run
@@ -28,13 +38,13 @@ Example/
 1. **Open Xcode** → Create a new Xcode Project
 2. Choose **App** → **iOS**
 3. Name it `OpenCDPExample`, set Interface to **SwiftUI**
-4. Replace the generated `OpenCDPExampleApp.swift` and `ContentView.swift` with the files in this directory
+4. Copy `OpenCDPExampleApp.swift` and `InAppDemoView.swift` from this directory into the project
 5. **Add the SDK Package**:
    - File → Add Package Dependencies...
-   - Enter: `https://github.com/code-matic/opencdp-ios-sdk.git`
+   - Enter: `https://github.com/opencdp/opencdp-ios-sdk.git`
    - Select **Add Package**
-6. Set your API key in `OpenCDPExampleApp.swift` or via an environment variable `CDP_API_KEY`
-7. **Run** on a simulator or device
+6. Set your API key in `OpenCDPExampleApp.swift` (`YOUR_CDP_API_KEY`) or via environment variable `CDP_API_KEY`
+7. **Run** on a simulator or device — tap **Identify user**, switch screens, then **Sync in-app**
 
 ## Handling Real APNs Tokens
 

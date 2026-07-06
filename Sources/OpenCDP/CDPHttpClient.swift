@@ -4,6 +4,7 @@ final class CDPHttpClient: @unchecked Sendable {
     let baseUrls: [String]
     private let apiKey: String
     private let debug: Bool
+    private let throwErrorsBack: Bool
     private let requestTimeout: TimeInterval
     private let session: URLSession
     private let storage: CDPStorage
@@ -17,6 +18,7 @@ final class CDPHttpClient: @unchecked Sendable {
         )
         self.apiKey = config.cdpApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         self.debug = config.debug
+        self.throwErrorsBack = config.throwErrorsBack
         self.requestTimeout = CdpGatewayUrls.clampRequestTimeout(config.cdpRequestTimeout)
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = requestTimeout
@@ -25,11 +27,32 @@ final class CDPHttpClient: @unchecked Sendable {
     }
 
     func post(endpoint: String, body: [String: Any], identifier: String? = nil) async throws {
-        let success = try await postInternal(endpoint: endpoint, body: body, isRetry: false)
+        let success = try await postInternal(endpoint: endpoint, body: body, isRetry: false, baseUrls: baseUrls)
         if !success {
+            if throwErrorsBack {
+                throw CDPError.networkError("All gateway hosts failed for POST \(endpoint)")
+            }
             enqueue(endpoint: endpoint, body: body, identifier: identifier)
         } else {
             await flushQueue()
+        }
+    }
+
+    func postWithBaseUrls(
+        _ hosts: [String],
+        endpoint: String,
+        body: [String: Any],
+        identifier: String? = nil,
+        queueOnFailure: Bool = true
+    ) async throws {
+        let success = try await postInternal(endpoint: endpoint, body: body, isRetry: false, baseUrls: hosts)
+        if !success {
+            if throwErrorsBack {
+                throw CDPError.networkError("All gateway hosts failed for POST \(endpoint)")
+            }
+            if queueOnFailure {
+                enqueue(endpoint: endpoint, body: body, identifier: identifier)
+            }
         }
     }
 
@@ -99,7 +122,7 @@ final class CDPHttpClient: @unchecked Sendable {
                 storage.popQueue()
                 continue
             }
-            let success = (try? await postInternal(endpoint: request.endpoint, body: body, isRetry: true)) ?? false
+            let success = (try? await postInternal(endpoint: request.endpoint, body: body, isRetry: true, baseUrls: baseUrls)) ?? false
             if success {
                 storage.popQueue()
             } else {
@@ -112,7 +135,12 @@ final class CDPHttpClient: @unchecked Sendable {
         }
     }
 
-    private func postInternal(endpoint: String, body: [String: Any], isRetry: Bool) async throws -> Bool {
+    private func postInternal(
+        endpoint: String,
+        body: [String: Any],
+        isRetry: Bool,
+        baseUrls: [String]
+    ) async throws -> Bool {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: body) else {
             throw CDPError.invalidInput
         }

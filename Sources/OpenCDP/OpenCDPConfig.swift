@@ -17,22 +17,36 @@ public enum PushClickBehaviorAndroid: Sendable {
     case activityNoFlags
 }
 
+public struct CustomerIOPushConfig: Sendable {
+    public let pushClickBehavior: PushClickBehaviorAndroid
+
+    public init(pushClickBehavior: PushClickBehaviorAndroid = .resetTaskStack) {
+        self.pushClickBehavior = pushClickBehavior
+    }
+}
+
 public struct CustomerIOConfig: Sendable {
     public let siteId: String
     public let apiKey: String
     public let region: CustomerIORegion
     public let autoTrackDeviceAttributes: Bool
+    public let migrationSiteId: String?
+    public let pushConfig: CustomerIOPushConfig?
 
     public init(
         siteId: String,
         apiKey: String,
         region: CustomerIORegion = .us,
-        autoTrackDeviceAttributes: Bool = true
+        autoTrackDeviceAttributes: Bool = true,
+        migrationSiteId: String? = nil,
+        pushConfig: CustomerIOPushConfig? = nil
     ) {
         self.siteId = siteId
         self.apiKey = apiKey
         self.region = region
         self.autoTrackDeviceAttributes = autoTrackDeviceAttributes
+        self.migrationSiteId = migrationSiteId
+        self.pushConfig = pushConfig
     }
 }
 

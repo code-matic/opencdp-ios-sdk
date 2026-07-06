@@ -2,12 +2,23 @@
 
 A native Swift SDK for integrating with the OpenCDP platform. Track user events, screen views, and device attributes with automatic lifecycle tracking.
 
+## Documentation
+
+Published guides on [docs.opencdp.io](https://docs.opencdp.io):
+
+- [Mobile E2E integration guide](https://docs.opencdp.io/integrations/mobile/e2e-guide)
+- [Identity and devices](https://docs.opencdp.io/integrations/mobile/identity-and-devices)
+- [Rich push images](https://docs.opencdp.io/integrations/mobile/push-big-picture)
+- [iOS SDK docs](https://docs.opencdp.io/integrations/ios/intro)
+- [Example app guide](https://docs.opencdp.io/integrations/ios/examples/example-app)
+
 ## Features
 
 - ✅ User identification and trait tracking
 - ✅ Custom event tracking
 - ✅ Screen view tracking (manual and automatic)
 - ✅ Device registration for push notifications (APNs)
+- ✅ Rich push big-picture images via Notification Service Extension (`image_url`)
 - ✅ Clear identity / logout support
 - ✅ Automatic application lifecycle tracking
 - ✅ Thread-safe singleton architecture
@@ -237,6 +248,45 @@ Make sure the App Group is enabled in both your main app and extension targets i
 
 ---
 
+### Rich push (big-picture) via Notification Service Extension
+
+When the push payload includes **`data.image_url`**, the Notification Service Extension can attach the image before display. The backend must set **`aps.mutable-content: 1`**.
+
+In your Notification Service Extension target:
+
+```swift
+import UserNotifications
+import OpenCDP
+
+class NotificationService: UNNotificationServiceExtension {
+    private let session = OpenCdpNotificationExtensionSession()
+
+    override func didReceive(
+        _ request: UNNotificationRequest,
+        withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+    ) {
+        session.didReceive(
+            request,
+            appGroup: "group.com.yourapp.opencdp",
+            contentHandler: contentHandler
+        )
+    }
+
+    override func serviceExtensionTimeWillExpire() {
+        session.serviceExtensionTimeWillExpire()
+    }
+}
+```
+
+`OpenCdpPushExtensionHelper`:
+- Downloads `image_url` and attaches it as a `UNNotificationAttachment`
+- Delivers enriched content **before** posting delivery metrics (display is not blocked)
+- Attaches the image even when delivery metric prerequisites are missing
+
+Use `OpenCDPPushPayload.parseImageUrl(data)` in the main app when parsing push payloads manually.
+
+---
+
 ## Error Handling
 
 By default, the SDK **silently logs errors** instead of throwing them. To receive errors in your code, set `throwErrorsBack: true`:
@@ -257,6 +307,31 @@ The SDK uses the `CDPError` type internally with the following cases:
 | `decodingError` | Response parsing failure |
 | `invalidInput` | Bad identifier or payload |
 | `initializationError` | SDK used before `initialize()` is called |
+
+---
+
+## Customer.io dual-write (optional)
+
+Link the Customer.io iOS SDK via the optional CocoaPods subspec:
+
+```ruby
+pod 'OpenCDP/CustomerIO', '~> 0.1.1'
+pod 'CustomerIO/DataPipelines', '~> 3.0'
+```
+
+When `sendToCustomerIo: true` and `customerIo` is configured, identify/track/screen/registerDeviceToken/clearIdentity mirror to Customer.io. Without the CIO SDK linked, OpenCDP continues to work (no-op dual-write).
+
+---
+
+## Push setup helper
+
+```swift
+OpenCDPPushSetup.setupPushNotifications(application: UIApplication.shared)
+// In AppDelegate — forward APNs token:
+OpenCDP.shared.registerDeviceToken(apnsTokenString)
+```
+
+See [PUSH_NOTIFICATION_V2_INTEGRATION.md](https://github.com/opencdp/opencdp-flutter-sdk/blob/main/PUSH_NOTIFICATION_V2_INTEGRATION.md) for NSE big-picture setup.
 
 ---
 
