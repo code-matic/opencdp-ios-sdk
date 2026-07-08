@@ -67,7 +67,7 @@ Or in Xcode: **File → Add Packages** → paste the URL above.
 Add to your `Podfile`:
 
 ```ruby
-pod 'OpenCDP', '~> 0.1.1'
+pod 'OpenCDP', '~> 1.0.2'
 ```
 
 Then run:

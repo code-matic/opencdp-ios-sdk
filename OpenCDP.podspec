@@ -16,8 +16,8 @@ Pod::Spec.new do |spec|
   #
 
   spec.name         = "OpenCDP"
-  spec.version      = "0.1.1"
-  spec.summary      = "OpenCDP iOS SDK — analytics, push v2, and in-app messaging parity with Flutter SDK v3.1.1."
+  spec.version      = "1.0.2"
+  spec.summary      = "OpenCDP iOS SDK — analytics, push v2, in-app messaging, and optional Customer.io dual-write."
 
   # This description is used to generate tags and improve search results.
   #   * Think: What does it do? Why did you write it? What is the focus?
