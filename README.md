@@ -173,16 +173,16 @@ OpenCDP.shared.track(
 
 ### Track a Screen View
 
-Track navigation to a specific screen manually. If `autoTrackScreens` is enabled, this is unnecessary for standard UIKit view controllers.
+Track navigation to a specific screen manually. Prefer this for SwiftUI and for stable Include / Exclude page-rule ids.
 
 ```swift
 OpenCDP.shared.trackScreenView(
-    title: "ProductDetails",
+    title: "/product-details",
     properties: ["sku": "X-001"]
 )
 ```
 
-Screen views are recorded internally as `screen_view` events with a `screen` property.
+When `autoTrackScreens` is enabled, UIKit appearances are tracked using `title` / `navigationItem.title` when set, otherwise a cleaned view controller type name. System/container controllers are skipped. Screen views are recorded as `screen_view` events with a `screen` property.
 
 ---
 

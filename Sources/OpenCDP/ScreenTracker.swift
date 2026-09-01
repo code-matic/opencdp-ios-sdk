@@ -46,7 +46,11 @@ final class ScreenTracker {
 extension UIViewController {
     @objc func opencdp_viewDidAppear(_ animated: Bool) {
         opencdp_viewDidAppear(animated)
-        let screen = String(describing: type(of: self))
+        guard let screen = ScreenNameResolver.resolve(
+            title: title,
+            navigationTitle: navigationItem.title,
+            typeName: String(describing: type(of: self))
+        ) else { return }
         NotificationCenter.default.post(
             name: NSNotification.Name("OpenCDPViewControllerDidAppear"),
             object: nil,
