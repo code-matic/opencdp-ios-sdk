@@ -13,6 +13,7 @@ public final class OpenCDP: @unchecked Sendable {
     private var inAppManager: CDPInAppManager?
     #if canImport(UIKit)
     private var screenTracker: ScreenTracker?
+    private var inAppAutoPresenter: InAppAutoPresenter?
     #endif
     private var wasBackgrounded = false
     private var initialized = false
@@ -61,6 +62,13 @@ public final class OpenCDP: @unchecked Sendable {
         let callbacks = InAppCallbacks(host: self)
         inAppManager = CDPInAppManager(config: config, callbacks: callbacks)
         inAppManager?.startIfEnabled(initialIdentity: currentUserId)
+
+        #if canImport(UIKit)
+        if config.enableInAppMessages && config.enableInAppAutoPresent {
+            inAppAutoPresenter = InAppAutoPresenter(openCDP: self, config: config)
+            inAppAutoPresenter?.start()
+        }
+        #endif
 
         Task { await httpClient?.flushQueue() }
 

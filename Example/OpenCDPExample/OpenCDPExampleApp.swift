@@ -17,6 +17,7 @@ struct OpenCDPExampleApp: App {
             trackApplicationLifecycleEvents: true,
             autoTrackDeviceAttributes: true,
             enableInAppMessages: true,
+            enableInAppAutoPresent: true,
             enableInAppRealtime: true,
             inAppSyncLimit: 10
         )

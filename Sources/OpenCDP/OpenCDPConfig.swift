@@ -64,6 +64,7 @@ public struct OpenCDPConfig: Sendable {
     public let sendToCustomerIo: Bool
     public let customerIo: CustomerIOConfig?
     public let enableInAppMessages: Bool
+    public let enableInAppAutoPresent: Bool
     public let enableInAppRealtime: Bool
     public let inAppPollInterval: TimeInterval
     public let inAppRealtimeStaleTimeout: TimeInterval
@@ -86,6 +87,7 @@ public struct OpenCDPConfig: Sendable {
         sendToCustomerIo: Bool = false,
         customerIo: CustomerIOConfig? = nil,
         enableInAppMessages: Bool = false,
+        enableInAppAutoPresent: Bool = false,
         enableInAppRealtime: Bool = true,
         inAppPollInterval: TimeInterval = 30,
         inAppRealtimeStaleTimeout: TimeInterval = 60,
@@ -107,6 +109,7 @@ public struct OpenCDPConfig: Sendable {
         self.sendToCustomerIo = sendToCustomerIo
         self.customerIo = customerIo
         self.enableInAppMessages = enableInAppMessages
+        self.enableInAppAutoPresent = enableInAppAutoPresent
         self.enableInAppRealtime = enableInAppRealtime
         self.inAppPollInterval = inAppPollInterval
         self.inAppRealtimeStaleTimeout = inAppRealtimeStaleTimeout
