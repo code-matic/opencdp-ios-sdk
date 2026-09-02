@@ -354,19 +354,33 @@ public final class OpenCDP: @unchecked Sendable {
         let deviceIdInput = "\(attrs["device_model"] ?? "")-\(attrs["device_manufacturer"] ?? "")-\(identifier)"
         let deviceId = HashGenerator.generateMd5Hash(deviceIdInput)
         do {
+            // fcmToken is required by the gateway; use the APNs-only sentinel when
+            // there is no FCM token. Omit empty optional strings (Joi rejects null).
+            var body: [String: Any] = [
+                "identifier": identifier,
+                "deviceId": deviceId,
+                "platform": "ios",
+                "fcmToken": "noAPNStoken",
+                "apnToken": token!,
+            ]
+            if let name = attrs["device_manufacturer"] as? String, !name.isEmpty {
+                body["name"] = name
+            }
+            if let osVersion = attrs["os_version"] as? String, !osVersion.isEmpty {
+                body["osVersion"] = osVersion
+            }
+            if let model = attrs["device_model"] as? String, !model.isEmpty {
+                body["model"] = model
+            }
+            if let appVersion = attrs["app_version"] as? String, !appVersion.isEmpty {
+                body["appVersion"] = appVersion
+            }
+            if !attrs.isEmpty {
+                body["attributes"] = attrs
+            }
             try await httpClient?.post(
                 endpoint: CDPEndpoints.registerDevice,
-                body: [
-                    "identifier": identifier,
-                    "deviceId": deviceId,
-                    "name": attrs["device_manufacturer"] ?? "Apple",
-                    "platform": "ios",
-                    "osVersion": attrs["os_version"] ?? "",
-                    "model": attrs["device_model"] ?? "",
-                    "apnToken": token!,
-                    "appVersion": attrs["app_version"] ?? "",
-                    "attributes": attrs,
-                ],
+                body: body,
                 identifier: identifier
             )
         } catch {
