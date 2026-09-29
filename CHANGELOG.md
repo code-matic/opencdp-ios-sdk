@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.3] - 2026-09-29
+
+### Changed
+
+- Default gateway fallback hosts updated from `api.opencdp.com` / `api.opencdp.xyz` to `api.open-cdp.com` / `api.open-cdp.xyz` (primary remains `api.opencdp.io`)
+
 ## [1.0.2] - 2026-07-08
 
 ### Added
