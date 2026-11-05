@@ -119,15 +119,21 @@ OpenCDP.shared.track(
 )
 ```
 
-4. **Register Device Token** (in `AppDelegate`):
+4. **Register Device Token** (in `AppDelegate`). OpenCDP sends push through Firebase Cloud Messaging, so pass the
+   FCM token as well — without it this device cannot receive OpenCDP pushes:
 
 ```swift
+import FirebaseMessaging
+
 func application(
     _ application: UIApplication,
     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
 ) {
+    Messaging.messaging().apnsToken = deviceToken
     let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
-    OpenCDP.shared.registerDeviceToken(tokenString)
+    Messaging.messaging().token { fcmToken, _ in
+        try? OpenCDP.shared.registerDeviceToken(tokenString, fcmToken: fcmToken)
+    }
 }
 ```
 
@@ -188,17 +194,27 @@ When `autoTrackScreens` is enabled, UIKit appearances are tracked using `title` 
 
 ### Register Device Token
 
-Register an APNs token to enable push notification targeting.
+Register the APNs token **and** the Firebase Cloud Messaging token. OpenCDP sends push through FCM, so a device
+registered without an FCM token cannot receive OpenCDP pushes (the SDK logs an error when this happens). The FCM
+token is stored and reused on later launches; call this again from
+`messaging(_:didReceiveRegistrationToken:)` when Firebase rotates it.
 
 ```swift
 func application(
     _ application: UIApplication,
     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
 ) {
+    Messaging.messaging().apnsToken = deviceToken
     let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
-    OpenCDP.shared.registerDeviceToken(tokenString)
+    Messaging.messaging().token { fcmToken, _ in
+        try? OpenCDP.shared.registerDeviceToken(tokenString, fcmToken: fcmToken)
+    }
 }
 ```
+
+**Delivery tracking:** iOS reports a push as *delivered* from the Notification Service Extension. Set the same
+`iOSAppGroup` in `OpenCDPConfig` and in the extension; without it the extension cannot read the API key or user and
+delivery is never reported (the SDK logs an error when a device registers without an App Group).
 
 ---
 
@@ -327,8 +343,8 @@ When `sendToCustomerIo: true` and `customerIo` is configured, identify/track/scr
 
 ```swift
 OpenCDPPushSetup.setupPushNotifications(application: UIApplication.shared)
-// In AppDelegate — forward APNs token:
-OpenCDP.shared.registerDeviceToken(apnsTokenString)
+// In AppDelegate — forward the APNs and FCM tokens:
+try? OpenCDP.shared.registerDeviceToken(apnsTokenString, fcmToken: fcmToken)
 ```
 
 See [PUSH_NOTIFICATION_V2_INTEGRATION.md](https://github.com/opencdp/opencdp-flutter-sdk/blob/main/PUSH_NOTIFICATION_V2_INTEGRATION.md) for NSE big-picture setup.

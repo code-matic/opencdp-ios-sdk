@@ -189,14 +189,38 @@ public final class OpenCDP: @unchecked Sendable {
         try? track(eventName: eventName, properties: properties)
     }
 
-    public func registerDeviceToken(_ token: String?) throws {
+    /// Registers this device for push.
+    ///
+    /// - Parameters:
+    ///   - token: The APNs device token.
+    ///   - fcmToken: The Firebase Cloud Messaging token (`Messaging.messaging().fcmToken`). OpenCDP sends push
+    ///     through FCM, so without it this device cannot receive OpenCDP pushes. Stored and reused on later launches.
+    public func registerDeviceToken(_ token: String?, fcmToken: String? = nil) throws {
         if config?.throwErrorsBack == true {
             try ensureInitializedThrows()
             if token != nil {
                 try validatePushTokenThrows(token)
             }
         }
-        Task { await registerDeviceTokenInternal(token) }
+        Task { await registerDeviceTokenInternal(token, fcmToken: fcmToken) }
+    }
+
+    /// Setup problems that stop push from being delivered or tracked; logged when a device registers.
+    static func pushSetupWarnings(fcmToken: String?, appGroup: String?) -> [String] {
+        var warnings: [String] = []
+        if fcmToken?.isEmpty ?? true {
+            warnings.append(
+                "No FCM token registered. OpenCDP sends push through Firebase Cloud Messaging, so this device "
+                    + "cannot receive pushes. Pass Messaging.messaging().fcmToken to registerDeviceToken(_:fcmToken:)."
+            )
+        }
+        if appGroup?.isEmpty ?? true {
+            warnings.append(
+                "iOSAppGroup is not set, so the Notification Service Extension cannot read the API key or user "
+                    + "and push delivery will not be reported. Set iOSAppGroup in OpenCDPConfig and in the extension."
+            )
+        }
+        return warnings
     }
 
     public func handleForegroundPushDelivery(_ data: [String: String]) {
@@ -341,13 +365,20 @@ public final class OpenCDP: @unchecked Sendable {
         return rawMessages.map(InAppMessage.fromJson)
     }
 
-    private func registerDeviceTokenInternal(_ token: String?) async {
+    private func registerDeviceTokenInternal(_ token: String?, fcmToken: String? = nil) async {
         guard await ensureInitialized() else { return }
         guard IdentifierValidator.isValidPushToken(token) else {
             logError("apnToken cannot be empty")
             return
         }
         storage?.setApnsToken(token!)
+        if let fcmToken, !fcmToken.isEmpty {
+            storage?.setFcmToken(fcmToken)
+        }
+        let resolvedFcmToken = storage?.getFcmToken()
+        for warning in Self.pushSetupWarnings(fcmToken: resolvedFcmToken, appGroup: config?.iOSAppGroup) {
+            logError(warning)
+        }
         #if canImport(UIKit)
         let attrs = deviceAttributes()
         let identifier = currentIdentifier()
@@ -360,7 +391,7 @@ public final class OpenCDP: @unchecked Sendable {
                 "identifier": identifier,
                 "deviceId": deviceId,
                 "platform": "ios",
-                "fcmToken": "noAPNStoken",
+                "fcmToken": resolvedFcmToken ?? "noAPNStoken",
                 "apnToken": token!,
             ]
             if let name = attrs["device_manufacturer"] as? String, !name.isEmpty {

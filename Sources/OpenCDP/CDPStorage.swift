@@ -17,6 +17,7 @@ final class CDPStorage: @unchecked Sendable {
         static let deviceId = "com.opencdp.device_id"
         static let requestQueue = "com.opencdp.request_queue"
         static let apnsToken = "com.opencdp.apns_token"
+        static let fcmToken = "com.opencdp.fcm_token"
     }
 
     init(appGroup: String?) {
@@ -58,6 +59,14 @@ final class CDPStorage: @unchecked Sendable {
 
     func getApnsToken() -> String? {
         defaults.string(forKey: Keys.apnsToken)
+    }
+
+    func setFcmToken(_ token: String) {
+        defaults.set(token, forKey: Keys.fcmToken)
+    }
+
+    func getFcmToken() -> String? {
+        defaults.string(forKey: Keys.fcmToken)
     }
 
     func saveBridgeCredentials(apiKey: String, baseUrl: String, baseUrls: [String]) {

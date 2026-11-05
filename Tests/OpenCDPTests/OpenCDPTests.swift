@@ -78,4 +78,32 @@ final class OpenCDPTests: XCTestCase {
             "https://cdn.example.com/img.png"
         )
     }
+
+    func testPushSetupWarnings_noneWhenFcmTokenAndAppGroupAreSet() {
+        XCTAssertEqual(
+            OpenCDP.pushSetupWarnings(fcmToken: "fcm-token", appGroup: "group.com.example.app"),
+            []
+        )
+    }
+
+    func testPushSetupWarnings_flagsMissingFcmToken() {
+        let warnings = OpenCDP.pushSetupWarnings(fcmToken: nil, appGroup: "group.com.example.app")
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("FCM token"))
+        XCTAssertEqual(OpenCDP.pushSetupWarnings(fcmToken: "", appGroup: "group.com.example.app").count, 1)
+    }
+
+    func testPushSetupWarnings_flagsMissingAppGroup() {
+        let warnings = OpenCDP.pushSetupWarnings(fcmToken: "fcm-token", appGroup: nil)
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("iOSAppGroup"))
+    }
+
+    func testRegisterDeviceToken_acceptsFcmTokenWithoutThrowing() {
+        let config = OpenCDPConfig(cdpApiKey: "test-key", throwErrorsBack: true)
+        OpenCDP.shared.initialize(config: config, shouldReinitialize: true)
+        XCTAssertNoThrow(try OpenCDP.shared.registerDeviceToken("apns-token", fcmToken: "fcm-token"))
+        // The single-argument form still compiles and works for existing integrations.
+        XCTAssertNoThrow(try OpenCDP.shared.registerDeviceToken("apns-token"))
+    }
 }

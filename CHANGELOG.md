@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `registerDeviceToken(_:fcmToken:)` takes the Firebase Cloud Messaging token. OpenCDP sends push through FCM, and the SDK previously registered iOS devices with no FCM token, so they could not receive OpenCDP pushes. The token is stored and reused on later launches; the single-argument call still works
+- An error is logged when a device registers without an FCM token, or without `iOSAppGroup` (the Notification Service Extension then cannot report delivery)
+
+### Docs
+
+- README push examples pass the FCM token and use `try?` (`registerDeviceToken` throws)
+
 ## [1.0.3] - 2026-09-29
 
 ### Changed
