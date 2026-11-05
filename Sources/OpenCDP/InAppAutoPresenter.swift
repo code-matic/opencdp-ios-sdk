@@ -1,5 +1,30 @@
 #if canImport(UIKit)
+import ObjectiveC
 import UIKit
+
+/// Closure target for a button. `UIButton.addAction` needs iOS 14 and the SDK supports iOS 13.
+private final class ButtonTapTarget: NSObject {
+    private let handler: () -> Void
+
+    init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    @objc func handleTap() {
+        handler()
+    }
+}
+
+private var buttonTapTargetKey: UInt8 = 0
+
+private extension UIButton {
+    func onTap(_ handler: @escaping () -> Void) {
+        let target = ButtonTapTarget(handler: handler)
+        addTarget(target, action: #selector(ButtonTapTarget.handleTap), for: .touchUpInside)
+        // UIControl does not retain its targets, so the button has to keep this one alive.
+        objc_setAssociatedObject(self, &buttonTapTargetKey, target, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+}
 
 /// Opt-in default UI for modal / banner in-app messages.
 /// Started when `OpenCDPConfig.enableInAppAutoPresent` is true.
@@ -123,19 +148,19 @@ final class InAppAutoPresenter {
         if let primary = message.ctas.first {
             let button = UIButton(type: .system)
             button.setTitle(primary.label, for: .normal)
-            button.addAction(UIAction { [weak self] _ in
+            button.onTap { [weak self] in
                 Task { await self?.openCDP?.trackInAppClick(message, actionId: primary.id) }
                 self?.dismissBanner()
-            }, for: .touchUpInside)
+            }
             row.addArrangedSubview(button)
         }
 
         let close = UIButton(type: .system)
         close.setTitle("✕", for: .normal)
-        close.addAction(UIAction { [weak self] _ in
+        close.onTap { [weak self] in
             Task { await self?.openCDP?.trackInAppDismiss(message, reason: .userClose) }
             self?.dismissBanner()
-        }, for: .touchUpInside)
+        }
         row.addArrangedSubview(close)
 
         banner.addSubview(row)
